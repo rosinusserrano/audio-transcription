@@ -1,0 +1,15 @@
+[project]
+name = "workshoptranscription"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "dotenv>=0.9.9",
+    "ipykernel>=7.2.0",
+    "matplotlib-inline>=0.2.1",
+    "openai-whisper>=20250625",
+    "pyannote-audio>=4.0.4",
+    "torch>=2.10.0",
+    "torchaudio>=2.10.0",
+]
