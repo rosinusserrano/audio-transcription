@@ -8,12 +8,50 @@ from pyannote.audio import Pipeline
 from pyannote.audio.pipelines.utils.hook import ProgressHook
 import dotenv
 
+# Usage info
+
+
+def print_usage_and_exit():
+    print("Usage:")
+    print("  transcribe.py SOURCE [TARGET]")
+    print(
+        "\nGoes through the source directory recursively and transcribes all audio files.\n"
+    )
+    print("- SOURCE: source directory where audio files are located.")
+    print("- TARGET (optional): if specified creates the transcription files")
+    print(
+        "                     in TARGET, mirroring the folder structure in SOURCE."
+    )
+    exit()
+
+
+source_dir = None
+target_dir = None
+
+if len(sys.argv) == 1 or len({"-h", "--help"}.intersection(sys.argv)) != 0:
+    print_usage_and_exit()
+
+elif len(sys.argv) == 2:
+    source_dir = sys.argv[1]
+    target_dir = source_dir
+    print(f"Only source directory specified: {source_dir}.")
+    print("  Writing transcriptions into same folder as audio files.")
+
+elif len(sys.argv) == 3:
+    source_dir = sys.argv[1]
+    target_dir = sys.argv[2]
+    print(f"Got source directory: {source_dir}")
+    print(f"  and target directory: {target_dir}")
+
+else:
+    print_usage_and_exit()
+
+assert isinstance(source_dir, str), "source directory not set"
+assert isinstance(target_dir, str), "target directory not set"
+
 # Setup
 
-print("THIS WORKS????")
-
 loaded_dotenv = dotenv.load_dotenv()
-pind = 4  # printing indentation
 
 HF_TOKEN = os.getenv("HF_TOKEN")
 
@@ -21,108 +59,119 @@ if HF_TOKEN is None:
     raise EnvironmentError(
         "Store the huggingface token in the .env file with key HF_TOKEN.")
 
-print(f"{'':<{pind}}Loading pyannote...")
+print("Loading pyannote...")
 pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-community-1",
                                     token=HF_TOKEN)
-print(f"{'':<{pind}}pyannote loaded")
-
-assert pipeline is not None, "Something happened"
+assert pipeline is not None, "Pipeline is None"
+print("pyannote loaded")
 
 if torch.cuda.is_available():
+    print("Using CUDA")
     pipeline.to(torch.device("cuda"))
 
-print(f"{'':<{pind}}Loading whisper...")
+print("Loading whisper...")
 whisper_model = whisper.load_model("tiny")
-print(f"{'':<{pind}}Whisper loaded")
+print("Whisper loaded")
 
-source_dir = sys.argv[1]
-target_dir = sys.argv[2]
 
-print(sys.argv)
+def transcribe_directory(src: str, dest: str, depth: int):
+    for filename in os.listdir(src):
 
-print(source_dir, target_dir)
+        filepath = os.path.join(src, filename)
 
-print("HERE TOO?")
+        # recursive call
 
-print(os.listdir(source_dir))
+        if os.path.isdir(filepath):
+            target_path = os.path.join(dest, filename)
+            os.makedirs(target_path, exist_ok=True)
+            print(f"{'':<{depth}}Going into folder {filepath}")
+            transcribe_directory(
+                filepath,
+                target_path,
+                depth + 1,
+            )
+            continue
 
-for filename in os.listdir(source_dir):
-    # only transcribe audio files
+        # only transcribe audio files
 
-    file_ending = filename.split(".")[-1]
-    if file_ending not in ["m4a", "mp3", "wav"]:
-        print(f"{'':<{pind}}Skipping {filename}")
-        continue
+        file_ending = filename.split(".")[-1]
+        if file_ending not in ["m4a", "mp3", "wav"]:
+            print(f"{'':<{depth}}Skipping {filepath}")
+            continue
 
-    print(f"{'':<{pind}}Processing {filename}")
-    pind += 1
+        print(f"{'':<{depth}}Processing {filepath}")
 
-    file_path = os.path.join(source_dir, filename)
+        # Speaker diarization
 
-    # Speaker diarization
+        print(f"{'':<{depth + 1}}Starting speaker diarization...")
 
-    print(f"{'':<{pind}}Starting speaker diarization...")
+        with ProgressHook() as hook:
+            assert pipeline is not None, "Pipeline is None"
+            waveform, sample_rate = torchaudio.load(filepath)
+            speaker_diarization = pipeline(
+                {
+                    "waveform": waveform,
+                    "sample_rate": sample_rate
+                }, hook=hook).speaker_diarization
 
-    with ProgressHook() as hook:
-        waveform, sample_rate = torchaudio.load(file_path)
-        speaker_diarization = pipeline(
-            {
-                "waveform": waveform,
-                "sample_rate": sample_rate
-            }, hook=hook).speaker_diarization
+        print(f"{'':<{depth + 1}}Speaker diarization complete")
 
-    print(f"{'':<{pind}}Speaker diarization complete")
+        # Transcription
 
-    # Transcription
+        print(f"{'':<{depth + 1}}Starting audio transcription...")
 
-    print(f"{'':<{pind}}Starting audio transcription...")
+        result = whisper_model.transcribe(filepath)
 
-    result = whisper_model.transcribe(file_path)
+        print(f"{'':<{depth + 1}}Transcription completed")
 
-    print(f"{'':<{pind}}Transcription completed")
+        # Matching diarization and transcription
 
-    # Matching diarization and transcription
+        print(f"{'':<{depth + 1}}Matching diarization and transcription...")
 
-    print(f"{'':<{pind}}Matching diarization and transcription...")
+        transcription = ""
 
-    transcription = ""
+        whisper_index = 0
 
-    whisper_index = 0
+        for turn, speaker in speaker_diarization:
+            transcription += f"[{speaker}]\n"
+            found_end = False
+            while not found_end:
+                current_segment = result["segments"][whisper_index]
 
-    for turn, speaker in speaker_diarization:
-        transcription += f"[{speaker}]\n"
-        found_end = False
-        while not found_end:
-            current_segment = result["segments"][whisper_index]
+                w_start = current_segment["start"]
+                w_end = current_segment["end"]
 
-            w_start = current_segment["start"]
-            w_end = current_segment["end"]
+                p_end = turn.end
 
-            p_end = turn.end
+                if w_end < p_end:
+                    transcription += f"{current_segment['text']} "
+                    whisper_index += 1
+                    if whisper_index >= len(result["segments"]):
+                        found_end = True
 
-            if w_end < p_end:
-                transcription += f"{current_segment['text']} "
-                whisper_index += 1
+                elif w_end - p_end < p_end - w_start:
+                    transcription += f"{current_segment['text']}"
+                    whisper_index += 1
+                    found_end = True
 
-            elif w_end - p_end < p_end - w_start:
-                transcription += f"{current_segment['text']}\n\n"
-                whisper_index += 1
-                found_end = True
+                else:
+                    transcription += "\n"
+                    found_end = True
+            
+            transcription += "\n\n"
+            if whisper_index >= len(result["segments"]):
+                break
 
-            else:
-                transcription += "\n"
-                found_end = True
+        target_filename = ''.join(filename.split('.')[:-1]) + ".txt"
 
-    target_filename = ''.join(filename.split('.')[:-1]) + ".txt"
+        target_file_path = os.path.join(dest, target_filename)
 
-    target_file_path = os.path.join(target_dir, target_filename)
+        with open(f"{target_file_path}", "w", encoding="utf-8") as file_txt:
+            file_txt.write(transcription)
 
-    with open(f"{target_file_path}", "w",
-              encoding="utf-8") as file_txt:
-        file_txt.write(transcription)
+        print(
+            f"{'':<{depth + 1}}Diarization and transcription matched and saved to {target_file_path}"
+        )
 
-    print(
-        f"{'':<{pind}}Diarization and transcription matched and saved to {target_file_path}"
-    )
-
-    pind -= 1
+if __name__ == "__main__":
+    transcribe_directory(source_dir, target_dir, depth=0)
