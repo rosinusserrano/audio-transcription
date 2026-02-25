@@ -70,7 +70,7 @@ if torch.cuda.is_available():
     pipeline.to(torch.device("cuda"))
 
 print("Loading whisper...")
-whisper_model = whisper.load_model("tiny")
+whisper_model = whisper.load_model("large-v3-turbo")
 print("Whisper loaded")
 
 

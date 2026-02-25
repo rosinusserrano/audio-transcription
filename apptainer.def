@@ -1,9 +1,11 @@
 Bootstrap: docker
-From: python:3.10
+From: python:3.12
 
 %files
-    $PWD/pyproject.toml pyproject.toml
+    $PWD/requirements.txt requirements.txt
 
 %post
     chmod 1777 /tmp  # necessary in case one wants to use apt on our cluster (this can also be done outside the .def file)
-    pip install --root-user-action=ignore .
+    apt update && apt install -y ffmpeg
+    pip install --root-user-action=ignore -r requirements.txt
+    pip3 install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
