@@ -133,7 +133,7 @@ def transcribe_directory(src: str, dest: str, depth: int):
         whisper_index = 0
 
         for turn, speaker in speaker_diarization:
-            transcription += f"[{speaker}]\n"
+            speaker_header_added = False
             found_end = False
             while not found_end:
                 current_segment = result["segments"][whisper_index]
@@ -144,12 +144,18 @@ def transcribe_directory(src: str, dest: str, depth: int):
                 p_end = turn.end
 
                 if w_end < p_end:
+                    if not speaker_header_added:
+                        transcription += f"[{speaker}]\n"
+                        speaker_header_added = True
                     transcription += f"{current_segment['text']} "
                     whisper_index += 1
                     if whisper_index >= len(result["segments"]):
                         found_end = True
 
                 elif w_end - p_end < p_end - w_start:
+                    if not speaker_header_added:
+                        transcription += f"[{speaker}]\n"
+                        speaker_header_added = True
                     transcription += f"{current_segment['text']}"
                     whisper_index += 1
                     found_end = True
@@ -158,7 +164,9 @@ def transcribe_directory(src: str, dest: str, depth: int):
                     transcription += "\n"
                     found_end = True
             
-            transcription += "\n\n"
+            if speaker_header_added:
+                transcription += "\n\n"
+                
             if whisper_index >= len(result["segments"]):
                 break
 
