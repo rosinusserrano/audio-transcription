@@ -145,7 +145,7 @@ def transcribe_directory(src: str, dest: str, depth: int):
 
                 if w_end < p_end:
                     if not speaker_header_added:
-                        transcription += f"[{speaker}]\n"
+                        transcription += f"[{speaker}] {turn}\n"
                         speaker_header_added = True
                     transcription += f"{current_segment['text']} "
                     whisper_index += 1
@@ -154,7 +154,7 @@ def transcribe_directory(src: str, dest: str, depth: int):
 
                 elif w_end - p_end < p_end - w_start:
                     if not speaker_header_added:
-                        transcription += f"[{speaker}]\n"
+                        transcription += f"[{speaker}] {turn}\n"
                         speaker_header_added = True
                     transcription += f"{current_segment['text']}"
                     whisper_index += 1
@@ -166,7 +166,7 @@ def transcribe_directory(src: str, dest: str, depth: int):
             
             if speaker_header_added:
                 transcription += "\n\n"
-                
+
             if whisper_index >= len(result["segments"]):
                 break
 
