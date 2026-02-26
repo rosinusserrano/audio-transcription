@@ -8,8 +8,6 @@ from pyannote.audio import Pipeline
 from pyannote.audio.pipelines.utils.hook import ProgressHook
 import dotenv
 
-# Usage info
-
 
 def print_usage_and_exit():
     print("Usage:")
@@ -23,6 +21,52 @@ def print_usage_and_exit():
         "                     in TARGET, mirroring the folder structure in SOURCE."
     )
     exit()
+
+
+def match_diarization_with_transcription(pyannote_diarization,
+                                         whisper_transcription):
+    "Matches pyannote diarization with whispers transcription."
+    transcription = ""
+    whisper_index = 0
+    for turn, speaker in pyannote_diarization:
+        speaker_header_added = False
+        found_end = False
+        while not found_end:
+            current_segment = whisper_transcription["segments"][whisper_index]
+
+            w_start = current_segment["start"]
+            w_end = current_segment["end"]
+
+            p_end = turn.end
+
+            if w_end < p_end:
+                if not speaker_header_added:
+                    transcription += f"[{speaker}] {turn}\n"
+                    speaker_header_added = True
+                transcription += f"{current_segment['text']} "
+                whisper_index += 1
+                if whisper_index >= len(whisper_transcription["segments"]):
+                    found_end = True
+
+            elif w_end - p_end < p_end - w_start:
+                if not speaker_header_added:
+                    transcription += f"[{speaker}] {turn}\n"
+                    speaker_header_added = True
+                transcription += f"{current_segment['text']}"
+                whisper_index += 1
+                found_end = True
+
+            else:
+                transcription += "\n"
+                found_end = True
+
+        if speaker_header_added:
+            transcription += "\n\n"
+
+        if whisper_index >= len(whisper_transcription["segments"]):
+            break
+    
+    return transcription
 
 
 source_dir = None
@@ -101,6 +145,17 @@ def transcribe_directory(src: str, dest: str, depth: int):
 
         print(f"{'':<{depth}}Processing {filepath}")
 
+        # skip if .txt file already exists
+
+        target_filename = ''.join(filename.split('.')[:-1]) + ".txt"
+        target_file_path = os.path.join(dest, target_filename)
+
+        if os.path.exists(target_file_path):
+            print(
+                f"{'':<{depth}}Skipping {filepath} because transcription already exists."
+            )
+            continue
+
         # Speaker diarization
 
         print(f"{'':<{depth + 1}}Starting speaker diarization...")
@@ -120,7 +175,7 @@ def transcribe_directory(src: str, dest: str, depth: int):
 
         print(f"{'':<{depth + 1}}Starting audio transcription...")
 
-        result = whisper_model.transcribe(filepath)
+        whisper_result = whisper_model.transcribe(filepath)
 
         print(f"{'':<{depth + 1}}Transcription completed")
 
@@ -128,51 +183,8 @@ def transcribe_directory(src: str, dest: str, depth: int):
 
         print(f"{'':<{depth + 1}}Matching diarization and transcription...")
 
-        transcription = ""
-
-        whisper_index = 0
-
-        for turn, speaker in speaker_diarization:
-            speaker_header_added = False
-            found_end = False
-            while not found_end:
-                current_segment = result["segments"][whisper_index]
-
-                w_start = current_segment["start"]
-                w_end = current_segment["end"]
-
-                p_end = turn.end
-
-                if w_end < p_end:
-                    if not speaker_header_added:
-                        transcription += f"[{speaker}] {turn}\n"
-                        speaker_header_added = True
-                    transcription += f"{current_segment['text']} "
-                    whisper_index += 1
-                    if whisper_index >= len(result["segments"]):
-                        found_end = True
-
-                elif w_end - p_end < p_end - w_start:
-                    if not speaker_header_added:
-                        transcription += f"[{speaker}] {turn}\n"
-                        speaker_header_added = True
-                    transcription += f"{current_segment['text']}"
-                    whisper_index += 1
-                    found_end = True
-
-                else:
-                    transcription += "\n"
-                    found_end = True
-            
-            if speaker_header_added:
-                transcription += "\n\n"
-
-            if whisper_index >= len(result["segments"]):
-                break
-
-        target_filename = ''.join(filename.split('.')[:-1]) + ".txt"
-
-        target_file_path = os.path.join(dest, target_filename)
+        transcription = match_diarization_with_transcription(
+            speaker_diarization, whisper_result)
 
         with open(f"{target_file_path}", "w", encoding="utf-8") as file_txt:
             file_txt.write(transcription)
@@ -180,6 +192,7 @@ def transcribe_directory(src: str, dest: str, depth: int):
         print(
             f"{'':<{depth + 1}}Diarization and transcription matched and saved to {target_file_path}"
         )
+
 
 if __name__ == "__main__":
     transcribe_directory(source_dir, target_dir, depth=0)
